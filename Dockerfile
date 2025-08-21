@@ -1,40 +1,46 @@
-# =====================================================================
-# שלב 1: אימג' בסיס של Red Hat UBI 9 עם פייתון.
-# אימג' זה תואם FIPS ונועד לרוץ ב-OpenShift.
-# הוא רץ כמשתמש non-root (UID 1001) כברירת מחדל.
-# =====================================================================
-FROM registry.access.redhat.com/ubi9/python-311
+# Stage 1: Use an official Python runtime as a parent image.
+# Using a 'slim' version is a good practice as it reduces the final image size.
+FROM python:3.13-slim
 
-# הגדרות סביבה סטנדרטיות
+# Set environment variables for Python
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# הגדר את ספריית העבודה
+# Create a non-root user for security
+RUN groupadd -r appuser && useradd -r -g appuser appuser
+
+# Set the working directory inside the container to /app.
+# All subsequent commands (COPY, RUN, CMD) will be executed from this path.
 WORKDIR /app
 
-# ---------------------------------------------------------------------
-# חלק זה דורש הרשאות root, לכן אנו עוברים זמנית למשתמש root
-USER root
-# שנה את הבעלות על ספריית העבודה למשתמש ברירת המחדל (1001)
-# הקבוצה 0 היא קבוצת root, שהמשתמש שייך אליה ויש לו הרשאות כתיבה
-RUN chown -R 1001:0 /app
-# ---------------------------------------------------------------------
-
-# חזור למשתמש ה-non-root המאובטח להמשך הבנייה והריצה
-USER 1001
-
-# העתק והתקן תלויות (כמשתמש non-root)
+# Copy the dependencies file to the working directory.
+# We copy this file first to leverage Docker's layer caching.
+# If this file doesn't change, Docker will reuse the cached layer where dependencies are installed,
+# speeding up subsequent builds.
 COPY requirements.txt .
-RUN pip install -r requirements.txt
 
-# העתק את קוד המקור (כמשתמש non-root)
+# Install any needed packages specified in requirements.txt.
+# --no-cache-dir reduces layer size.
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy the entire 'app' directory (our source code) into the container at /app/app.
 COPY ./app /app/app
+# Copy the data directory (our source code) into the container at /app/data
 COPY ./data /app/data
 
-# חשוף את הפורט
+# Change ownership of the app directory to the non-root user
+RUN chown -R appuser:appuser /app
+
+# Switch to the non-root user
+USER appuser
+
+# Expose port 8080 to the outside world. This is a common convention for cloud platforms
+# like OpenShift, which often expect applications to listen on this port.
 EXPOSE 8080
 
-# הפקודה להרצת האפליקציה
+# The command to run the application when the container starts.
+# We bind to '0.0.0.0' to make the server accessible from outside the container.
+# The path to the data_loader object is 'app.main:app'.
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]

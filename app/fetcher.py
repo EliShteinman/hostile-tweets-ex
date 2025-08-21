@@ -1,11 +1,10 @@
 import logging
-import certifi
 from typing import Any, Dict, List, Optional
 
 from pymongo import AsyncMongoClient
 from pymongo.collection import Collection
 from pymongo.database import Database
-from pymongo.errors import ConnectionFailure, PyMongoError
+from pymongo.errors import PyMongoError
 
 logger = logging.getLogger(__name__)
 
@@ -28,19 +27,15 @@ class DataLoader:
     async def connect(self):
         """Creates an asynchronous connection to MongoDB and sets up indexes if needed."""
         try:
-            ca_file = certifi.where()
-
             self.client = AsyncMongoClient(
                 self.mongo_uri,
                 serverSelectionTimeoutMS=30000,
-                tls=True,
-                tlsCAFile=ca_file
             )
             await self.client.admin.command("ping")
             self.db = self.client[self.db_name]
             self.collection = self.db[self.collection_name]
             logger.info("Successfully connected to MongoDB.")
-        except (PyMongoError, ConnectionFailure) as e:
+        except PyMongoError as e:
             logger.error(f"DATABASE CONNECTION FAILED: {e}")
             self.client = None
             self.db = None
