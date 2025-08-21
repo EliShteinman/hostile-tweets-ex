@@ -9,7 +9,7 @@ from .dependencies import data_loader
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
 
@@ -24,8 +24,13 @@ async def lifespan(app: FastAPI):
     try:
         await data_loader.connect()
         logger.info("Database connection established successfully.")
+        df = await data_loader.get_all_data_as_dataframe()
+        logger.info(f"Successfully retrieved {len(df)} raw records")
+
     except Exception as e:
-        logger.error(f"Application startup failed: Could not connect to the database. Error: {e}")
+        logger.error(
+            f"Application startup failed: Could not connect to the database. Error: {e}"
+        )
 
     yield
 
@@ -56,7 +61,7 @@ def health_check_endpoint():
     return {
         "status": "ok",
         "service": "Malicious Text Analysis API",
-        "version": "1.0.0"
+        "version": "1.0.0",
     }
 
 
@@ -96,8 +101,7 @@ async def read_raw_data():
     except RuntimeError as e:
         logger.error(f"Database error retrieving raw data: {str(e)}")
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(e)
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e)
         )
     except Exception as e:
         logger.error(f"Unexpected error retrieving raw data: {str(e)}")
