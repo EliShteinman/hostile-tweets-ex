@@ -1,0 +1,17 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: mongo-atlas-route
+  labels:
+    app.kubernetes.io/name: fastapi-mongo
+    app.kubernetes.io/instance: mongo-atlas
+    app.kubernetes.io/part-of: mongo-loader-app
+spec:
+  to:
+    kind: Service
+    name: mongo-atlas-service
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
