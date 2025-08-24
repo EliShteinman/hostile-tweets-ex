@@ -1,4 +1,4 @@
-# services/data_loader/dependencies.py
+# app/dependencies.py
 import os
 
 from .fetcher import DataLoader

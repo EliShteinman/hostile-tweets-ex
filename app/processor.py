@@ -1,160 +1,111 @@
+# app/processor.py
+import logging
 import pandas as pd
 import nltk
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
 from collections import Counter
-import re
-import logging
+from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
-# הורדת VADER lexicon
+# Download needed data
 try:
-    nltk.data.find('sentiment/vader_lexicon.zip')
-except LookupError:
-    nltk.download('vader_lexicon')
+    nltk.download("vader_lexicon", quiet=True)
+    logger.info("VADER lexicon installed successfully")
+except Exception as e:
+    logger.error(f"Error installing VADER lexicon: {e}")
+
+# Create one object for whole system
+sid = SentimentIntensityAnalyzer()
 
 
 class DataProcessor:
-    """
-    process the data
-    """
+    """Class for processing and analyzing texts"""
 
-    def __init__(self, weapons_file_path='data/weapons.txt'):
-        self.sid = SentimentIntensityAnalyzer()
-        self.weapons_list = self._load_weapons(weapons_file_path)
+    def __init__(self):
+        logger.info("Starting DataProcessor setup")
 
-    def _load_weapons(self, file_path):
-        """load the weapons list from a file"""
-        try:
-            with open(file_path, 'r') as f:
-                # read the file line by line
-                return {line.strip().lower() for line in f if line.strip()}
-        except FileNotFoundError:
-            logger.error(f"Weapons file not found: {file_path}")
-            return set()
+    @staticmethod
+    def convert_to_df(data: List[dict]) -> pd.DataFrame:
+        """Convert data to pandas DataFrame"""
+        logger.info(f"Starting conversion to DataFrame from {len(data)} records")
 
-    def _find_rarest_word(self, df):
-        """מוצא את המילה הנדירה ביותר עבור כל טקסט"""
-        if df.empty:
-            print("no data to process")
-            return pd.Series()
-
-        print("finding rarest word...")
-        print(f"DataFrame columns: {df.columns.tolist()}")
-
-        # בודק איזה שדה קיים - Text או original_text
-        text_column = None
-        if 'Text' in df.columns:
-            text_column = 'Text'
-        elif 'original_text' in df.columns:
-            text_column = 'original_text'
-        else:
-            logger.error("No text column found!")
-            return pd.Series([''] * len(df))
-
-        print(f"Using text column: {text_column}")
-
-        # בונה רשימת כל המילים
-        all_words = ' '.join(df[text_column].dropna().astype(str)).lower().split()
-        # ספירת תדירות כל מילה
-        word_counts = Counter(all_words)
-
-        def get_rarest_for_text(text):
-            if not isinstance(text, str) or not text.strip():
-                return ""
-
-            words_in_text = list(set(text.lower().split()))
-            rarest_word = None
-            min_count = float('inf')
-
-            for word in words_in_text:
-                if word_counts[word] < min_count:
-                    min_count = word_counts[word]
-                    rarest_word = word
-            return rarest_word if rarest_word else ""
-
-        return df[text_column].apply(get_rarest_for_text)
-
-    def _get_sentiment(self, text):
-        """calculate the sentiment of the text"""
-        if not isinstance(text, str) or not text.strip():
-            return "neutral"
+        if not data:
+            logger.warning("No data received for conversion")
+            return pd.DataFrame()
 
         try:
-            score = self.sid.polarity_scores(text)['compound']
-
-            if score >= 0.5:
-                return "positive"
-            elif score <= -0.5:
-                return "negative"
-            else:
-                return "neutral"
-        except Exception as e:
-            logger.warning(f"Sentiment analysis failed: {e}")
-            return "neutral"
-
-    def _find_weapons(self, text):
-        """find the first weapon in the text."""
-        if not isinstance(text, str) or not text.strip():
-            return ""
-
-        try:
-            text_lower = text.lower()
-
-            for weapon in self.weapons_list:
-                # use regex to check if the weapon is in the text
-                if re.search(r'\b' + re.escape(weapon) + r'\b', text_lower):
-                    return weapon
-            return ""
-        except Exception as e:
-            logger.warning(f"Weapon detection failed: {e}")
-            return ""
-
-    def process_data(self, df):
-        """
-        the main function of the class. process the data and return a DataFrame.
-        """
-        if df.empty:
+            df = pd.DataFrame(data)
+            logger.info(f"Conversion completed successfully: {len(df)} rows, {len(df.columns)} columns")
+            logger.debug(f"Columns: {list(df.columns)}")
             return df
-
-        processed_df = df.copy()
-
-        # בודק איזה שדה טקסט קיים
-        text_column = None
-        if 'Text' in df.columns:
-            text_column = 'Text'
-        elif 'original_text' in df.columns:
-            text_column = 'original_text'
-        else:
-            logger.error("No text column found in DataFrame!")
-            return processed_df
-
-        print(f"Processing with text column: {text_column}")
-
-        # יוצר שדה original_text אם לא קיים (לתאימות)
-        if 'original_text' not in processed_df.columns:
-            processed_df['original_text'] = processed_df[text_column]
-
-        # 1. finding the rarest word
-        try:
-            processed_df['rarest_word'] = self._find_rarest_word(processed_df)
         except Exception as e:
-            logger.error(f"Error in rarest word processing: {e}")
-            processed_df['rarest_word'] = ""
+            logger.error(f"Error converting to DataFrame: {e}")
+            raise
 
-        # 2. finding the sentiment
+    @staticmethod
+    def find_first_rarest_word(text: str) -> str:
+        """Find the rarest word (first one) in text"""
+        if not text or not isinstance(text, str):
+            logger.debug("Empty or invalid text")
+            return ""
+
+        words = text.split()
+        if not words:
+            logger.debug("No words in text")
+            return ""
+
+        count = Counter(words)
+        min_freq = min(count.values())
+
+        for word in words:
+            if count[word] == min_freq:
+                logger.debug(f"Found rare word: '{word}' (frequency: {min_freq})")
+                return word
+
+        return ""
+
+    @staticmethod
+    def find_weapons(text: str, weapons: set) -> str:
+        """Find first weapon in text from blacklist"""
+        if not text or not isinstance(text, str):
+            logger.debug("Empty or invalid text for weapon check")
+            return ""
+
+        if not weapons:
+            logger.warning("Weapons list is empty")
+            return ""
+        weapons_lower = {w.lower() for w in weapons}
+        words = text.split()
+        for word in words:
+            if word.lower() in weapons_lower:
+                logger.debug(f"Weapon found: '{word}'")
+                return word
+
+        logger.debug("No weapons found in text")
+        return ""
+
+    @staticmethod
+    def get_sentiment(text: str) -> str:
+        """Get text sentiment: positive/negative/neutral"""
+        if not text or not isinstance(text, str):
+            logger.debug("Empty or invalid text for sentiment analysis")
+            return "neutral"
+
         try:
-            processed_df['sentiment'] = processed_df[text_column].apply(self._get_sentiment)
-        except Exception as e:
-            logger.error(f"Error in sentiment processing: {e}")
-            processed_df['sentiment'] = "neutral"
+            score = sid.polarity_scores(text)
+            compound = score['compound']
 
-        # 3. finding the weapons name
-        try:
-            processed_df['weapons_detected'] = processed_df[text_column].apply(self._find_weapons)
-        except Exception as e:
-            logger.error(f"Error in weapons processing: {e}")
-            processed_df['weapons_detected'] = ""
+            if compound >= 0.5:
+                sentiment = "positive"
+            elif compound <= -0.5:
+                sentiment = "negative"
+            else:
+                sentiment = "neutral"
 
-        print(f"Processing completed. Final columns: {processed_df.columns.tolist()}")
-        return processed_df
+            logger.debug(f"Text sentiment: {sentiment} (score: {compound:.3f})")
+            return sentiment
+
+        except Exception as e:
+            logger.error(f"Error in sentiment analysis: {e}")
+            return "neutral"

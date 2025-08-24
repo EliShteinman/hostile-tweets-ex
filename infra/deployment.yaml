@@ -20,7 +20,7 @@ spec:
     spec:
       containers:
         - name: fastapi-container
-          image: "docker.io/a0533057932/fastapi-mongo-atlas:1.1.2"
+          image: "docker.io/YOUR_DOCKERHUB_USERNAME/fastapi-mongo-atlas:latest"
           imagePullPolicy: Always
           ports:
             - containerPort: 8080

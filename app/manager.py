@@ -1,107 +1,119 @@
-from .processor import DataProcessor
-import pandas as pd
+# app/manager.py
 import logging
+from typing import List, Dict, Any
+from .processor import DataProcessor
 
 logger = logging.getLogger(__name__)
+
+
 class AnalysisManager:
-    def __init__(self, df: pd.DataFrame):
-        self.raw_data_df = df
+    """Class for managing analysis and processing tasks"""
+
+    def __init__(self, data: dict):
+        logger.info("Starting AnalysisManager setup")
+
+        self.raw_data = data['raw_data']
+        self.data_as_df = None
+        self.path_weapons = "data/weapons.txt"
+        self.weapons = self._load_weapons()
         self.processor = DataProcessor()
-        self.processed_data = None
-        self._processing_completed = False  # ← דגל למניעת עיבוד כפול
 
-    def debug_data_schema(self):
-        """פונקציה לדיבוג סכמת הנתונים"""
-        print(f"DataFrame shape: {self.raw_data_df.shape}")
-        print(f"DataFrame columns: {list(self.raw_data_df.columns)}")
-        if not self.raw_data_df.empty:
-            print(f"Sample record:")
-            sample = self.raw_data_df.iloc[0].to_dict()
-            print(sample)
-        return self.raw_data_df.columns.tolist()
+        logger.info(f"Received {len(self.raw_data)} records for processing")
+        logger.info(f"Loaded {len(self.weapons)} weapons from blacklist")
 
-    def run_full_analysis(self):
-        """מריץ את כל תהליך הניתוח - רק פעם אחת!"""
-
-        # אם כבר עיבדנו - לא נעשה זאת שוב
-        if self._processing_completed:
-            logger.info("Analysis already completed - skipping")
-            return
+    def start_analysis(self):
+        """Start full analysis process"""
+        logger.info("Starting full analysis process...")
 
         try:
-            if self.raw_data_df.empty:
-                logger.warning("Empty DataFrame - setting empty results")
-                self.processed_data = []
-                self._processing_completed = True
+            # Convert to DataFrame
+            logger.info("Step 1: Convert to DataFrame")
+            self.data_as_df = DataProcessor().convert_to_df(self.raw_data)
+
+            if self.data_as_df.empty:
+                logger.error("DataFrame is empty - cannot continue analysis")
                 return
 
-            logger.info("🔄 Starting data processing...")
+            # Process rare words
+            logger.info("Step 2: Find rare words")
+            self.data_as_df["rarest_word"] = self.data_as_df["Text"].apply(
+                self.processor.find_first_rarest_word
+            )
+            rare_words_found = self.data_as_df["rarest_word"].apply(lambda x: x != "").sum()
+            logger.info(f"Found rare words in {rare_words_found} records")
 
-            # דיבוג סכמה
-            columns = self.debug_data_schema()
-            logger.info(f"Available columns: {columns}")
+            # Detect weapons
+            logger.info("Step 3: Detect weapons")
+            self.data_as_df["weapons_detected"] = self.data_as_df["Text"].apply(
+                lambda txt: self.processor.find_weapons(txt, self.weapons)
+            )
+            weapons_found = self.data_as_df["weapons_detected"].apply(lambda x: x != "").sum()
+            logger.info(f"Found weapons in {weapons_found} records")
 
-            # עיבוד הנתונים
-            processed_df = self.processor.process_data(self.raw_data_df)
+            # Analyze sentiment
+            logger.info("Step 4: Analyze sentiment")
+            self.data_as_df["sentiment"] = self.data_as_df["Text"].apply(
+                self.processor.get_sentiment
+            )
 
-            if processed_df.empty:
-                logger.warning("Processing returned empty DataFrame")
-                self.processed_data = []
-                self._processing_completed = True
-                return
+            # Sentiment statistics with clearer logging
+            sentiment_stats = self.data_as_df["sentiment"].value_counts()
+            logger.info("Sentiment analysis completed")
+            logger.info(f"Positive sentiment: {sentiment_stats.get('positive', 0)} records")
+            logger.info(f"Negative sentiment: {sentiment_stats.get('negative', 0)} records")
+            logger.info(f"Neutral sentiment: {sentiment_stats.get('neutral', 0)} records")
 
-            # המרה לפורמט הנדרש
-            logger.info("Converting to output format...")
-            result = []
+            # Change column name and fix id field
+            logger.info("Step 5: Rename columns for output format")
+            self.data_as_df = self.data_as_df.rename(columns={
+                "Text": "original_text",
+                "_id": "id"
+            })
 
-            for index, row in processed_df.iterrows():
-                try:
-                    # בודק איזה שדה טקסט קיים
-                    original_text = ""
-                    if 'original_text' in row:
-                        original_text = str(row['original_text'])
-                    elif 'Text' in row:
-                        original_text = str(row['Text'])
-
-                    record = {
-                        "id": str(row.get('_id', f"row_{index}")),
-                        "original_text": original_text,
-                        "rarest_word": str(row.get('rarest_word', '')),
-                        "sentiment": str(row.get('sentiment', 'neutral')),
-                        "weapons_detected": str(row.get('weapons_detected', ''))
-                    }
-                    result.append(record)
-
-                except Exception as e:
-                    logger.error(f"Error processing row {index}: {e}")
-                    # הוסף רשומה ריקה במקרה של שגיאה
-                    record = {
-                        "id": str(index),
-                        "original_text": "",
-                        "rarest_word": "",
-                        "sentiment": "neutral",
-                        "weapons_detected": ""
-                    }
-                    result.append(record)
-
-            self.processed_data = result
-            self._processing_completed = True  # ← סמן שסיימנו
-            logger.info(f"Analysis completed successfully - {len(result)} records processed")
+            logger.info("Analysis process completed successfully")
+            logger.info(f"Summary: {len(self.data_as_df)} processed records with {len(self.data_as_df.columns)} fields")
 
         except Exception as e:
-            logger.error(f"Fatal error in analysis: {e}")
-            import traceback
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            # הגדר תוצאה ריקה במקרה של שגיאה
-            self.processed_data = []
-            self._processing_completed = True
+            logger.error(f"Error in analysis process: {e}")
+            raise
 
-    def get_processed_data(self):
-        """מחזיר את הנתונים המעובדים - ללא עיבוד נוסף!"""
+    def get_processed_data(self) -> List[Dict[str, Any]]:
+        """Return processed data as list of dictionaries"""
+        logger.info("Preparing processed data for output...")
 
-        # אם עוד לא עיבדנו - תריץ עיבוד
-        if not self._processing_completed:
-            logger.info("Data not processed yet - running analysis")
-            self.run_full_analysis()
+        if self.data_as_df is None:
+            logger.error("No processed data - need to run start_analysis() first")
+            return []
 
-        return self.processed_data if self.processed_data is not None else []
+        try:
+            result = self.data_as_df.to_dict("records")
+            logger.info(f"Successfully prepared {len(result)} processed records for output")
+            return result
+        except Exception as e:
+            logger.error(f"Error preparing output data: {e}")
+            return []
+
+    def _load_weapons(self) -> set:
+        """Load weapons list from file"""
+        logger.info(f"Loading weapons list from: {self.path_weapons}")
+
+        try:
+            with open(self.path_weapons, "r", encoding="utf-8") as f:
+                weapons = {line.strip() for line in f if line.strip()}
+
+            logger.info(f"Successfully loaded {len(weapons)} weapons from blacklist")
+
+            # Log sample weapons for verification
+            if weapons:
+                sample_weapons = list(weapons)[:3]
+                logger.debug(f"Sample weapons loaded: {sample_weapons}")
+
+            return weapons
+
+        except FileNotFoundError:
+            logger.error(f"Weapons file not found: {self.path_weapons}")
+            logger.error("Analysis will continue without weapon detection")
+            return set()
+        except Exception as e:
+            logger.error(f"Error loading weapons file: {e}")
+            return set()

@@ -25,6 +25,8 @@ COPY requirements.txt .
 # --no-cache-dir reduces layer size.
 RUN pip install --no-cache-dir -r requirements.txt
 
+#
+RUN mkdir -p /nltk_data && chmod -R 777 /nltk_data
 # Copy the entire 'app' directory (our source code) into the container at /app/app.
 COPY ./app /app/app
 # Copy the data directory (our source code) into the container at /app/data

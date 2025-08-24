@@ -1,218 +1,170 @@
+# app/main.py
 import logging
 import os
 from contextlib import asynccontextmanager
+from typing import Dict, Any
 
 from fastapi import FastAPI, HTTPException, status
-from .manager import AnalysisManager
 from .dependencies import data_loader
+from .manager import AnalysisManager
 
+# Setup logging
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    format="%(asctime)s | %(name)-20s | %(levelname)-8s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
 )
 logger = logging.getLogger(__name__)
 
-# משתנה גלובלי לתוצאות מעובדות
-processed_results = None
-startup_error = None
+# Global data storage
+data: Dict[str, Any] = {}
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """מנהל אירועי התחלה וסיום של האפליקציה."""
-    global processed_results, startup_error
+    """Manage application startup and shutdown events"""
 
-    # בהתחלת השרת:
-    logger.info("Application startup: connecting to database...")
+    # Server startup
+    logger.info("Starting application setup...")
+
     try:
+        # Step 1: Connect to database
+        logger.info("Step 1: Connecting to database...")
         await data_loader.connect()
-        logger.info("Database connection established successfully.")
+        logger.info("Database connection completed")
 
-        # קבלת נתונים
-        logger.info("Loading data from database...")
-        df = await data_loader.get_all_data_as_dataframe()
-        logger.info(f"Successfully retrieved {len(df)} raw records")
+        # Step 2: Get data
+        logger.info("Step 2: Getting data from database...")
+        raw_data = await data_loader.get_all_data()
+        data['raw_data'] = raw_data
+        logger.info(f"Got {len(raw_data)} records from database")
 
-        # דיבוג סכמת הנתונים
-        logger.info(f"DataFrame columns: {list(df.columns)}")
+        # Step 3: Process data
+        logger.info("Step 3: Starting data processing...")
+        analysis_manager = AnalysisManager(data)
+        analysis_manager.start_analysis()
+        data['processed_data'] = analysis_manager.get_processed_data()
+        logger.info(f"Processed {len(data['processed_data'])} records")
 
-        # יצירת מנהל הניתוח
-        logger.info("Creating AnalysisManager...")
-        analysis_manager = AnalysisManager(df)
-
-        # הרצת הניתוח - זה קורה רק פעם אחת!
-        logger.info("Starting one-time analysis processing...")
-        analysis_manager.run_full_analysis()
-
-        # שמירת התוצאות בזיכרון
-        processed_results = analysis_manager.get_processed_data()
-        logger.info(f"Analysis completed! {len(processed_results)} records processed and cached")
-
-        if processed_results and len(processed_results) > 0:
-            logger.info(f"Sample processed record: {processed_results[0]}")
-
-        startup_error = None
+        logger.info("Application setup completed successfully")
 
     except Exception as e:
-        logger.error(f"Application startup failed: {e}")
-        import traceback
-        logger.error(f"Full traceback: {traceback.format_exc()}")
-        startup_error = str(e)
-        processed_results = []
+        logger.error(f"Application setup failed: {e}")
+        logger.error("Application will continue running but without data")
+        data['raw_data'] = []
+        data['processed_data'] = []
 
+    # Run application
     yield
 
-    # בסגירת השרת:
-    logger.info("Application shutdown: disconnecting from database...")
+    # Server shutdown
+    logger.info("Starting application shutdown...")
     try:
         data_loader.disconnect()
-        logger.info("Database disconnection completed.")
+        logger.info("Database disconnection completed")
+        logger.info("Application shutdown completed successfully")
     except Exception as e:
-        logger.error(f"Error during database disconnection: {e}")
+        logger.error(f"Error during shutdown: {e}")
 
 
-# יצירת אפליקציית FastAPI הראשית
+# Create FastAPI application
 app = FastAPI(
     lifespan=lifespan,
     title="Malicious Text Analysis API",
     version="1.0.0",
-    description="מערכת לניתוח טקסטים זדוניים - זיהוי רגש, מילים נדירות וכלי נשק",
+    description="System for analyzing malicious texts - emotion detection, rare words and weapons",
 )
+
+logger.info("FastAPI initialized - Malicious Text Analysis Application")
 
 
 @app.get("/")
 def health_check_endpoint():
-    """בדיקת בריאות בסיסית."""
-    return {
+    """Basic health check"""
+    logger.info("Basic health check request")
+
+    response = {
         "status": "ok",
         "service": "Malicious Text Analysis API",
         "version": "1.0.0",
+        "message": "Service is running"
     }
+
+    logger.debug(f"Health response: {response['status']}")
+    return response
 
 
 @app.get("/health")
 def detailed_health_check():
-    """בדיקת בריאות מפורטת."""
-    db_status = "connected" if data_loader.collection is not None else "disconnected"
+    """Detailed health check"""
+    logger.info("Detailed health check request")
 
-    # בדיקת מצב העיבוד
-    if startup_error:
-        processing_status = f"failed: {startup_error}"
-    elif processed_results is not None:
-        processing_status = f"ready ({len(processed_results)} records)"
-    else:
-        processing_status = "not_ready"
+    # Check database status
+    db_status = "connected" if data_loader.collection is not None else "disconnected"
+    logger.debug(f"Database status: {db_status}")
+
+    # Check data availability
+    data_status = {
+        "raw_records": len(data.get('raw_data', [])),
+        "processed_records": len(data.get('processed_data', []))
+    }
+    logger.debug(f"Data status: {data_status}")
 
     if db_status == "disconnected":
+        logger.warning("Database is not available")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Database not available",
         )
 
-    return {
-        "status": "ok",
+    response = {
+        "status": "healthy",
         "service": "Malicious Text Analysis API",
         "version": "1.0.0",
         "database_status": db_status,
-        "processing_status": processing_status,
+        "data_status": data_status,
+        "timestamp": "2025-01-01T00:00:00Z"
     }
+
+    logger.info("Detailed health check completed successfully")
+    return response
 
 
 @app.get("/data")
 async def read_raw_data():
-    """מחזיר את הנתונים הגולמיים מהמסד נתונים ללא עיבוד."""
+    """Return raw data from database without processing"""
+    logger.info("Request for raw data")
+
     try:
-        logger.info("Retrieving raw data from database")
         raw_data = await data_loader.get_all_data()
-        logger.info(f"Successfully retrieved {len(raw_data)} raw records")
+        logger.info(f"Returned {len(raw_data)} raw records")
         return raw_data
+
     except RuntimeError as e:
-        logger.error(f"Database error retrieving raw data: {str(e)}")
+        logger.error(f"Database error: {str(e)}")
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e)
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Database error: {str(e)}"
         )
     except Exception as e:
-        logger.error(f"Unexpected error retrieving raw data: {str(e)}")
+        logger.error(f"Unexpected error: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred",
         )
 
 
-@app.get("/processed-data")
-async def get_processed_data():
-    """
-    הנקודת קצה הראשית - מחזירה נתונים מעובדים בפורמט הנדרש.
-    הנתונים מעובדים מראש ונשמרים בזיכרון!
-    """
-    global processed_results, startup_error
+@app.get("/data-proses")
+def read_processed_data():
+    """Return processed data"""
+    logger.info("Request for processed data")
 
-    # בדיקה אם יש שגיאה מהstartup
-    if startup_error:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Analysis failed during startup: {startup_error}"
-        )
+    processed_data = data.get('processed_data', [])
 
-    # בדיקה אם התוצאות מוכנות
-    if processed_results is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Analysis results not ready yet. Please wait for startup to complete."
-        )
+    if not processed_data:
+        logger.warning("No processed data available")
+        return []
 
-    try:
-        logger.info(f"Returning cached processed data - {len(processed_results)} records")
-        return processed_results
-
-    except Exception as e:
-        logger.error(f"Error returning processed data: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An unexpected error occurred while returning data"
-        )
-
-
-@app.get("/stats")
-async def get_stats():
-    """מחזיר סטטיסטיקות על המערכת"""
-    global processed_results, startup_error
-
-    return {
-        "total_processed_records": len(processed_results) if processed_results else 0,
-        "startup_error": startup_error,
-        "status": "ready" if processed_results else "not_ready",
-        "database_connected": data_loader.collection is not None
-    }
-
-
-@app.get("/debug/schema")
-async def debug_schema():
-    """endpoint לדיבוג סכמת הנתונים"""
-    try:
-        # קבלת דגימה מהDB
-        df = await data_loader.get_all_data_as_dataframe()
-
-        return {
-            "columns": list(df.columns),
-            "dataframe_shape": df.shape,
-            "sample_record": df.iloc[0].to_dict() if not df.empty else None
-        }
-    except Exception as e:
-        return {"error": str(e)}
-
-
-@app.get("/debug/weapons")
-def debug_weapons():
-    """endpoint לבדיקת רשימת הנשקים"""
-    try:
-        from .processor import DataProcessor
-        processor = DataProcessor()
-        return {
-            "weapons_count": len(processor.weapons_list),
-            "sample_weapons": list(processor.weapons_list)[:10] if processor.weapons_list else [],
-            "weapons_file_loaded": len(processor.weapons_list) > 0
-        }
-    except Exception as e:
-        return {"error": str(e)}
+    logger.info(f"Returning {len(processed_data)} processed records")
+    return processed_data
